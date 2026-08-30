@@ -7,6 +7,8 @@ import {
   getNextTag,
   updateChargingRecord,
   updateChargingStatus,
+  completeChargingRecord,
+  updatePaymentStatus,
   deleteChargingRecord,
 } from '../controllers/chargingController.js';
 
@@ -25,5 +27,7 @@ router
   .delete(deleteChargingRecord);
 
 router.patch('/:id/status', updateChargingStatus);
+router.patch('/:id/complete', completeChargingRecord);
+router.patch('/:id/payment', updatePaymentStatus);
 
 export default router;

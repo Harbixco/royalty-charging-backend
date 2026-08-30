@@ -48,17 +48,17 @@ export const getNextTag = asyncHandler(async (req, res) => {
 // Amount is NEVER accepted from the client — it is always derived
 // server-side from active PricingConfig entries matching pricingKey / items.
 export const createChargingRecord = asyncHandler(async (req, res) => {
-  const { customerName, tagNumber, pricingKey, items, notes } = req.body;
+  const { customerName, tagNumber, pricingKey, items, notes, paymentStatus } = req.body;
 
   if (!customerName || !customerName.trim()) {
     throw new ApiError(400, 'Customer name is required');
   }
 
-  // Automatic tag assignment if not provided
-  let normalizedTag = tagNumber?.trim() ? tagNumber.trim().toUpperCase() : '';
-  if (!normalizedTag) {
-    normalizedTag = await getNextAvailableTag();
+  if (!tagNumber || !tagNumber.trim()) {
+    throw new ApiError(400, 'Tag number is required');
   }
+
+  const normalizedTag = tagNumber.trim().toUpperCase();
 
   const existingActive = await ChargingRecord.findOne({
     tagNumber: normalizedTag,
@@ -99,6 +99,7 @@ export const createChargingRecord = asyncHandler(async (req, res) => {
         pricingKey: pricing.key,
         option: pricing.optionLabel,
         amount: pricing.price,
+        charged: true,
       });
       totalAmount += pricing.price;
     }
@@ -128,6 +129,7 @@ export const createChargingRecord = asyncHandler(async (req, res) => {
         pricingKey: pricing.key,
         option: pricing.optionLabel,
         amount: pricing.price,
+        charged: true,
       },
     ];
     totalAmount = pricing.price;
@@ -136,6 +138,8 @@ export const createChargingRecord = asyncHandler(async (req, res) => {
     primaryPricingKey = pricing.key;
   }
 
+  const isPaid = paymentStatus === 'Paid';
+
   const record = await ChargingRecord.create({
     customerName: customerName.trim(),
     tagNumber: normalizedTag,
@@ -143,7 +147,10 @@ export const createChargingRecord = asyncHandler(async (req, res) => {
     pricingKey: primaryPricingKey,
     option: primaryOption,
     items: resolvedItems,
+    originalAmount: totalAmount,
     amount: totalAmount, // snapshot at creation time
+    paymentStatus: isPaid ? 'Paid' : 'Unpaid',
+    paidAt: isPaid ? new Date() : null,
     status: 'Charging',
     notes,
   });
@@ -258,6 +265,77 @@ export const updateChargingStatus = asyncHandler(async (req, res) => {
   await record.save();
 
   res.status(200).json(new ApiResponse(200, record, `Record marked as ${status}`));
+});
+
+// PATCH /api/charging/:id/complete
+// Completes charging session, allows marking individual gadgets as charged or not charged,
+// recalculates record.amount to subtract uncharged gadgets from total income, and sets paymentStatus.
+export const completeChargingRecord = asyncHandler(async (req, res) => {
+  const { items: itemUpdates, paymentStatus } = req.body;
+  const record = await ChargingRecord.findById(req.params.id);
+  if (!record) throw new ApiError(404, 'Charging record not found');
+
+  if (Array.isArray(itemUpdates) && record.items && record.items.length > 0) {
+    const updatedItems = record.items.map((item, idx) => {
+      const update = itemUpdates.find(
+        (u) =>
+          u.index === idx ||
+          (u._id && String(u._id) === String(item._id)) ||
+          (u.pricingKey && u.pricingKey === item.pricingKey && (!u.option || u.option === item.option))
+      );
+      const isCharged = update !== undefined && update.charged !== undefined
+        ? Boolean(update.charged)
+        : item.charged !== false;
+      return {
+        _id: item._id,
+        gadgetType: item.gadgetType,
+        pricingKey: item.pricingKey,
+        option: item.option,
+        amount: item.amount,
+        charged: isCharged,
+      };
+    });
+
+    record.items = updatedItems;
+    // Calculate new total amount based only on charged gadgets
+    const chargedAmount = updatedItems
+      .filter((it) => it.charged)
+      .reduce((sum, it) => sum + (it.amount || 0), 0);
+
+    record.amount = chargedAmount;
+  }
+
+  if (paymentStatus && ['Paid', 'Unpaid'].includes(paymentStatus)) {
+    record.paymentStatus = paymentStatus;
+    if (paymentStatus === 'Paid' && !record.paidAt) {
+      record.paidAt = new Date();
+    } else if (paymentStatus === 'Unpaid') {
+      record.paidAt = null;
+    }
+  }
+
+  record.status = 'Completed';
+  record.completedAt = new Date();
+  await record.save();
+
+  res.status(200).json(new ApiResponse(200, record, 'Charging session completed and revenue updated'));
+});
+
+// PATCH /api/charging/:id/payment
+export const updatePaymentStatus = asyncHandler(async (req, res) => {
+  const { paymentStatus } = req.body;
+  if (!paymentStatus || !['Paid', 'Unpaid'].includes(paymentStatus)) {
+    throw new ApiError(400, 'Payment status must be "Paid" or "Unpaid"');
+  }
+
+  const record = await ChargingRecord.findById(req.params.id);
+  if (!record) throw new ApiError(404, 'Charging record not found');
+
+  record.paymentStatus = paymentStatus;
+  record.paidAt = paymentStatus === 'Paid' ? new Date() : null;
+  await record.save();
+
+  res.status(200).json(new ApiResponse(200, record, `Payment marked as ${paymentStatus}`));
 });
 
 // DELETE /api/charging/:id

@@ -44,15 +44,29 @@ const chargingRecordSchema = new mongoose.Schema(
         pricingKey: { type: String, required: true },
         option: { type: String, required: true },
         amount: { type: Number, required: true },
+        charged: { type: Boolean, default: true },
       },
     ],
-    // Snapshot of the price at the moment this record was created.
-    // Intentionally NOT derived from PricingConfig on read, so that
-    // later price changes never alter historical records.
+    // Snapshot of the original total price at creation
+    originalAmount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Original amount cannot be negative'],
+    },
+    // Final payable amount (adjusted if gadgets are marked uncharged upon completion)
     amount: {
       type: Number,
       required: true,
       min: [0, 'Amount cannot be negative'],
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['Unpaid', 'Paid'],
+      default: 'Unpaid',
+    },
+    paidAt: {
+      type: Date,
+      default: null,
     },
     status: {
       type: String,
@@ -100,5 +114,6 @@ chargingRecordSchema.pre('save', function setCompletedAt(next) {
 
 export const GADGET_TYPE_VALUES = GADGET_TYPES;
 export const STATUS_VALUES = STATUSES;
+export const PAYMENT_STATUS_VALUES = ['Unpaid', 'Paid'];
 
 export default mongoose.model('ChargingRecord', chargingRecordSchema);

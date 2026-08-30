@@ -22,6 +22,10 @@ export const buildChargingFilter = (query) => {
     filter.status = query.status;
   }
 
+  if (query.paymentStatus) {
+    filter.paymentStatus = query.paymentStatus;
+  }
+
   if (query.dateFrom || query.dateTo) {
     filter.createdAt = {};
     if (query.dateFrom) filter.createdAt.$gte = new Date(query.dateFrom);
