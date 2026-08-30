@@ -6,6 +6,7 @@ import chargingRoutes from './routes/chargingRoutes.js';
 import pricingRoutes from './routes/pricingRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import { protect } from './middleware/authMiddleware.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
 const app = express();
@@ -32,10 +33,13 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ success: true, message: 'Royalty Charging API is running' });
 });
 
+// Public Authentication Route
 app.use('/api/auth', authRoutes);
-app.use('/api/charging', chargingRoutes);
-app.use('/api/pricing', pricingRoutes);
-app.use('/api/dashboard', dashboardRoutes);
+
+// Protected Admin API Routes (Token required)
+app.use('/api/charging', protect, chargingRoutes);
+app.use('/api/pricing', protect, pricingRoutes);
+app.use('/api/dashboard', protect, dashboardRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
