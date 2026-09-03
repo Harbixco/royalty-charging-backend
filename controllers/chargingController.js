@@ -163,10 +163,35 @@ export const getChargingRecords = asyncHandler(async (req, res) => {
   const filter = buildChargingFilter(req.query);
   const { page, limit, skip } = getPagination(req.query);
 
-  const [records, total] = await Promise.all([
+  const [records, total, revenueAgg] = await Promise.all([
     ChargingRecord.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     ChargingRecord.countDocuments(filter),
+    ChargingRecord.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$amount' },
+          paidRevenue: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$amount', 0],
+            },
+          },
+          unpaidRevenue: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentStatus', 'Unpaid'] }, '$amount', 0],
+            },
+          },
+        },
+      },
+    ]),
   ]);
+
+  const summary = {
+    totalRevenue: revenueAgg[0]?.totalRevenue || 0,
+    paidRevenue: revenueAgg[0]?.paidRevenue || 0,
+    unpaidRevenue: revenueAgg[0]?.unpaidRevenue || 0,
+  };
 
   res.status(200).json(
     new ApiResponse(
@@ -179,6 +204,7 @@ export const getChargingRecords = asyncHandler(async (req, res) => {
           total,
           totalPages: Math.max(Math.ceil(total / limit), 1),
         },
+        summary,
       },
       'Charging records retrieved'
     )
@@ -305,13 +331,16 @@ export const completeChargingRecord = asyncHandler(async (req, res) => {
     record.amount = chargedAmount;
   }
 
-  if (paymentStatus && ['Paid', 'Unpaid'].includes(paymentStatus)) {
-    record.paymentStatus = paymentStatus;
-    if (paymentStatus === 'Paid' && !record.paidAt) {
-      record.paidAt = new Date();
-    } else if (paymentStatus === 'Unpaid') {
-      record.paidAt = null;
-    }
+  // Completing handover automatically marks record as 'Paid' by default
+  const finalPaymentStatus = paymentStatus && ['Paid', 'Unpaid'].includes(paymentStatus)
+    ? paymentStatus
+    : 'Paid';
+
+  record.paymentStatus = finalPaymentStatus;
+  if (finalPaymentStatus === 'Paid' && !record.paidAt) {
+    record.paidAt = new Date();
+  } else if (finalPaymentStatus === 'Unpaid') {
+    record.paidAt = null;
   }
 
   record.status = 'Completed';
